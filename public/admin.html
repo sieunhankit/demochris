@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Admin - Live Streams</title>
+  <style>
+    body{font-family:system-ui;margin:20px;background:#0b0b0b;color:#fff}
+    input,button{padding:10px;border-radius:10px;border:1px solid #333;background:#111;color:#fff}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .muted{opacity:.7}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:14px}
+    .card{border:1px solid #222;border-radius:14px;padding:12px;background:#111}
+    video{width:100%;max-height:320px;background:#000;border-radius:12px}
+    .badge{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #333;background:#0f0f0f;font-size:12px;opacity:.85}
+  </style>
+</head>
+<body>
+  <h2>Admin - Live Streams</h2>
+
+  <div class="row">
+    <input id="room" placeholder="room id" value="default"/>
+    <button id="btn">Connect</button>
+  </div>
+  <div id="status" class="muted" style="margin-top:8px;"></div>
+
+  <div class="grid" id="grid"></div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const socket = io(location.origin, { transports: ["websocket"] });
+    const $ = (id) => document.getElementById(id);
+    const status = (t) => ($("status").textContent = t);
+
+    let roomId = "";
+    // participantSocketId -> { pc, videoEl }
+    const peers = new Map();
+
+    const iceServers = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" }
+    ];
+
+    $("btn").onclick = () => {
+      roomId = $("room").value.trim();
+      socket.emit("admin:subscribe", { roomId });
+      status("Connected. Waiting for streams…");
+    };
+
+    socket.on("room:update", (participants) => {
+      // Show only those who enabled streaming (server already filters)
+      renderCards(participants);
+      status(`Streaming enabled users: ${participants.length}`);
+    });
+
+    socket.on("participant:streamAllowed", ({ socketId, allow }) => {
+      // If user turned off, cleanup their peer
+      if (!allow) cleanupPeer(socketId);
+    });
+
+    // WebRTC offer from participant (they auto-start)
+    socket.on("webrtc:offer", async ({ from, sdp }) => {
+      await ensurePeer(from);
+      const peer = peers.get(from);
+
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await peer.pc.createAnswer();
+      await peer.pc.setLocalDescription(answer);
+
+      socket.emit("webrtc:answer", { to: from, sdp: peer.pc.localDescription });
+    });
+
+    socket.on("webrtc:ice", async ({ from, candidate }) => {
+      const peer = peers.get(from);
+      if (!peer) return;
+      try { await peer.pc.addIceCandidate(candidate); } catch {}
+    });
+
+    async function ensurePeer(participantId) {
+      if (peers.has(participantId)) return;
+
+      const pc = new RTCPeerConnection({ iceServers });
+      pc.onicecandidate = (e) => {
+        if (e.candidate) socket.emit("webrtc:ice", { to: participantId, candidate: e.candidate });
+      };
+
+      const videoEl = createVideoCard(participantId);
+      pc.ontrack = (e) => {
+        videoEl.srcObject = e.streams[0];
+        // no audio anyway; but helps autoplay policies
+        videoEl.muted = true;
+        videoEl.play?.().catch(()=>{});
+      };
+
+      peers.set(participantId, { pc, videoEl });
+    }
+
+    function createVideoCard(participantId) {
+      const grid = $("grid");
+      const card = document.createElement("div");
+      card.className = "card";
+      card.id = `card-${participantId}`;
+
+      card.innerHTML = `
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <div><b>Participant</b> <span class="badge">${participantId}</span></div>
+            <div class="muted" style="margin-top:4px;">Auto stream (user opted-in)</div>
+          </div>
+          <button style="padding:8px 10px;border-radius:10px;" onclick="window._stop('${participantId}')">Stop</button>
+        </div>
+        <div style="margin-top:10px;">
+          <video playsinline autoplay></video>
+        </div>
+      `;
+
+      grid.appendChild(card);
+      return card.querySelector("video");
+    }
+
+    window._stop = (participantId) => cleanupPeer(participantId);
+
+    function cleanupPeer(participantId) {
+      const peer = peers.get(participantId);
+      if (!peer) return;
+
+      try { peer.pc.close(); } catch {}
+      peers.delete(participantId);
+
+      const card = document.getElementById(`card-${participantId}`);
+      if (card) card.remove();
+    }
+
+    function renderCards(participants) {
+      // Keep existing cards; remove those no longer in list
+      const allowedSet = new Set(participants.map(p => p.socketId));
+      for (const id of [...peers.keys()]) {
+        if (!allowedSet.has(id)) cleanupPeer(id);
+      }
+      // (Cards will be created when offer arrives)
+    }
+  </script>
+</body>
+</html>
