@@ -478,6 +478,7 @@
 
       const STATE = {
         mode: "TREE",
+        musicUserPaused: false,
         prevMode: "TREE",
         focusIndex: -1,
         focusTarget: null,
@@ -2289,10 +2290,22 @@
 
         if (toggleBtn) {
           const iconSpan = toggleBtn.querySelector("span");
-          toggleBtn.addEventListener("click", (e) => {
+          toggleBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
-            if (audioEl.paused) safePlay();
-            else {
+            const iconSpan = toggleBtn.querySelector("span");
+
+            if (!audioEl) return;
+
+            if (audioEl.paused) {
+              STATE.musicUserPaused = false; // ✅ user muốn play lại
+              try {
+                await audioEl.play();
+                if (iconSpan) iconSpan.textContent = "♫";
+              } catch {
+                if (iconSpan) iconSpan.textContent = "▶";
+              }
+            } else {
+              STATE.musicUserPaused = true; // ✅ user muốn pause
               audioEl.pause();
               if (iconSpan) iconSpan.textContent = "▶";
             }
@@ -2387,17 +2400,15 @@
         if (result.landmarks && result.landmarks.length > 0) {
           const audio = document.getElementById("bg-music");
           const iconSpan = document.querySelector("#music-toggle span");
-          if (audio && audio.paused) {
-            // 注意：如果用户从未与页面交互，这里可能依然会被浏览器拦截
-            // 但如果用户之前点击过允许摄像头，这通常算作一次交互
+
+          // ✅ chỉ auto-play nếu user chưa chủ động pause
+          if (audio && audio.paused && !STATE.musicUserPaused) {
             audio
               .play()
               .then(() => {
                 if (iconSpan) iconSpan.textContent = "♫";
               })
-              .catch((e) => {
-                /* 忽略自动播放失败的报错 */
-              });
+              .catch(() => {});
           }
         }
         if (result.landmarks && result.landmarks.length > 0) {
