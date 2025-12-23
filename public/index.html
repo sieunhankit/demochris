@@ -2267,7 +2267,6 @@
       function setupAudio() {
         audioEl = document.getElementById("bg-music");
         const toggleBtn = document.getElementById("music-toggle");
-
         if (DEFAULT_RESOURCES.music && audioEl) {
           audioEl.src = DEFAULT_RESOURCES.music;
         }
@@ -2385,6 +2384,22 @@
       }
 
       function processGestures(result) {
+        if (result.landmarks && result.landmarks.length > 0) {
+          const audio = document.getElementById("bg-music");
+          const iconSpan = document.querySelector("#music-toggle span");
+          if (audio && audio.paused) {
+            // 注意：如果用户从未与页面交互，这里可能依然会被浏览器拦截
+            // 但如果用户之前点击过允许摄像头，这通常算作一次交互
+            audio
+              .play()
+              .then(() => {
+                if (iconSpan) iconSpan.textContent = "♫";
+              })
+              .catch((e) => {
+                /* 忽略自动播放失败的报错 */
+              });
+          }
+        }
         if (result.landmarks && result.landmarks.length > 0) {
           STATE.hand.detected = true;
           const lm = result.landmarks[0];
