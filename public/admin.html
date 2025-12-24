@@ -216,7 +216,9 @@
       }
       function pickMime() {
         const cands = [
+          "video/webm;codecs=vp9",
           "video/webm;codecs=vp9,opus",
+          "video/webm;codecs=vp8",
           "video/webm;codecs=vp8,opus",
           "video/webm",
         ];
@@ -233,24 +235,27 @@
         const stream = videoEl?.srcObject;
 
         if (!stream) {
-          alert(
-            "Chưa nhận được stream từ user này. Đợi video chạy rồi bấm Record lại nhé."
-          );
+          alert("Chưa nhận được stream. Đợi video chạy rồi bấm Record lại.");
           return;
         }
 
-        // Nếu đã đang record thì bỏ qua
         const prev = recordings.get(participantId);
         if (prev?.recorder && prev.recorder.state === "recording") return;
-
-        // cleanup blob cũ
         if (prev?.blobUrl) URL.revokeObjectURL(prev.blobUrl);
 
         const chunks = [];
         const mimeType = pickMime();
+
+        // ✅ Bitrate cao hơn -> nét hơn (tuỳ máy: 6-12 Mbps)
+        const recorderOptions = {
+          mimeType: mimeType || undefined,
+          videoBitsPerSecond: 10_000_000, // 10 Mbps
+          // audioBitsPerSecond: 128_000, // nếu có audio thì bật
+        };
+
         const recorder = new MediaRecorder(
           stream,
-          mimeType ? { mimeType } : undefined
+          mimeType ? recorderOptions : undefined
         );
 
         recorder.ondataavailable = (e) => {
@@ -263,11 +268,9 @@
 
           recordings.set(participantId, { recorder, chunks, blobUrl, blob });
 
-          // UI: show download button
           const dl = document.getElementById(`dl-${participantId}`);
           if (dl) dl.style.display = "inline-flex";
 
-          // UI: status text
           const st = document.getElementById(`recst-${participantId}`);
           if (st)
             st.textContent = `Recorded: ${(blob.size / 1024 / 1024).toFixed(
@@ -282,9 +285,9 @@
           blob: null,
         });
 
-        recorder.start(1000); // gom dữ liệu mỗi 1s
+        recorder.start(1000);
         const st = document.getElementById(`recst-${participantId}`);
-        if (st) st.textContent = "● Recording…";
+        if (st) st.textContent = "● Recording (HQ)…";
       }
 
       function stopRecord(participantId) {

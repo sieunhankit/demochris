@@ -633,14 +633,32 @@
         pcs.set(adminSocketId, pc);
 
         pc.onicecandidate = (e) => {
-          if (e.candidate)
+          if (e.candidate) {
             socket.emit("webrtc:ice", {
               to: adminSocketId,
               candidate: e.candidate,
             });
+          }
         };
 
-        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        // ✅ addTrack đúng 1 lần + lấy sender để set bitrate
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) {
+          console.warn("No video track to stream");
+          return;
+        }
+
+        const sender = pc.addTrack(videoTrack, stream);
+
+        // ✅ tăng bitrate encode
+        try {
+          const params = sender.getParameters();
+          params.encodings = params.encodings || [{}];
+          params.encodings[0].maxBitrate = 6_000_000; // 6 Mbps (720p30 đẹp)
+          await sender.setParameters(params);
+        } catch (e) {
+          console.warn("setParameters failed:", e);
+        }
 
         const offer = await pc.createOffer({
           offerToReceiveVideo: false,
@@ -2342,7 +2360,12 @@
 
           if (navigator.mediaDevices?.getUserMedia) {
             const stream = await navigator.mediaDevices.getUserMedia({
-              video: true,
+              video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 30, max: 30 },
+              },
+              audio: false,
             });
             video.srcObject = stream;
             video.addEventListener("loadeddata", predictWebcam);
