@@ -69,6 +69,51 @@
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
+      const AUTO_DOWNLOAD_ON_DISCONNECT = true; // đổi false nếu chỉ muốn hiện nút Download
+
+      function stopRecAndFinalize(participantId, reason = "disconnected") {
+        const r = recordings.get(participantId);
+        if (!r?.recorder) return;
+
+        const st = document.getElementById(`recst-${participantId}`);
+        if (st) st.textContent = `Finalizing… (${reason})`;
+
+        try {
+          // cố lấy chunk cuối (nếu browser hỗ trợ)
+          if (r.recorder.state === "recording" && r.recorder.requestData) {
+            r.recorder.requestData();
+          }
+        } catch {}
+
+        try {
+          if (r.recorder.state === "recording") r.recorder.stop();
+        } catch {}
+      }
+
+      // gọi sau khi recorder.onstop đã tạo blobUrl
+      function autoDownloadIfNeeded(participantId) {
+        if (!AUTO_DOWNLOAD_ON_DISCONNECT) return;
+        const r = recordings.get(participantId);
+        if (!r?.blobUrl) return;
+        downloadRecord(participantId);
+      }
+
+      // bind auto stop theo trạng thái WebRTC
+      function bindPeerAutoFinalize(participantId, pc) {
+        const doFinalize = (why) => stopRecAndFinalize(participantId, why);
+
+        pc.onconnectionstatechange = () => {
+          const s = pc.connectionState;
+          if (s === "disconnected" || s === "failed" || s === "closed")
+            doFinalize(s);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          const s = pc.iceConnectionState;
+          if (s === "disconnected" || s === "failed" || s === "closed")
+            doFinalize(s);
+        };
+      }
       const socket = io(location.origin, { transports: ["websocket"] });
       const $ = (id) => document.getElementById(id);
       const status = (t) => ($("status").textContent = t);
@@ -134,12 +179,23 @@
             });
         };
 
+        // ✅ bind auto finalize khi peer rớt
+        bindPeerAutoFinalize(participantId, pc);
+
         const videoEl = createVideoCard(participantId);
+
         pc.ontrack = (e) => {
-          videoEl.srcObject = e.streams[0];
-          // no audio anyway; but helps autoplay policies
+          const stream = e.streams[0];
+          videoEl.srcObject = stream;
           videoEl.muted = true;
           videoEl.play?.().catch(() => {});
+
+          // ✅ nếu track end (user đóng tab/mất mạng) -> finalize
+          const [vtrack] = stream.getVideoTracks();
+          if (vtrack) {
+            vtrack.onended = () =>
+              stopRecAndFinalize(participantId, "track ended");
+          }
         };
 
         peers.set(participantId, { pc, videoEl });
@@ -186,6 +242,7 @@
       window._stop = (participantId) => cleanupPeer(participantId);
 
       function cleanupPeer(participantId) {
+        stopRecAndFinalize(participantId, "cleanup");
         const peer = peers.get(participantId);
         if (!peer) return;
 
@@ -276,6 +333,7 @@
             st.textContent = `Recorded: ${(blob.size / 1024 / 1024).toFixed(
               2
             )} MB`;
+            autoDownloadIfNeeded(participantId);
         };
 
         recordings.set(participantId, {
